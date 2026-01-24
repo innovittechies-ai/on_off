@@ -204,7 +204,7 @@ if 'attendance_data' in st.session_state and st.session_state['attendance_data']
         fig = px.histogram(summary_df, x='Total Duration (min)', 
                           title="📊 Duration Distribution",
                           color_discrete_sequence=['#FF6B6B'])
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         # Sessions per user
@@ -212,8 +212,8 @@ if 'attendance_data' in st.session_state and st.session_state['attendance_data']
                     title="🏆 Top 10 Most Active Participants",
                     color='Total Sessions',
                     color_continuous_scale='viridis')
-        fig.update_xaxis(tickangle=45)
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(xaxis_tickangle=45)
+        st.plotly_chart(fig, width='stretch')
     
     # Detailed table
     st.subheader("📋 Detailed Attendance Report")
@@ -233,7 +233,7 @@ if 'attendance_data' in st.session_state and st.session_state['attendance_data']
     display_df = filtered_df.drop('Sessions', axis=1)
     st.dataframe(
         display_df,
-        use_container_width=True,
+        width='stretch',
         column_config={
             "Name": st.column_config.TextColumn("👤 Name", width="medium"),
             "Email": st.column_config.TextColumn("📧 Email", width="medium"),
@@ -262,7 +262,7 @@ if 'attendance_data' in st.session_state and st.session_state['attendance_data']
         
         st.dataframe(
             sessions_df,
-            use_container_width=True,
+            width='stretch',
             column_config={
                 "date": st.column_config.DateColumn("📅 Date"),
                 "duration": st.column_config.NumberColumn("⏱️ Duration (min)"),
