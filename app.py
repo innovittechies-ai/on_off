@@ -3,19 +3,15 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 import plotly.express as px
-import plotly.graph_objects as go
 from collections import defaultdict
-import io
 
 st.set_page_config(
     page_title="🎯 Zoom Attendance Tracker",
     page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 def get_zoom_token(account_id, client_id, client_secret):
-    """Get Zoom OAuth token"""
     url = "https://zoom.us/oauth/token"
     data = {'grant_type': 'account_credentials', 'account_id': account_id}
     response = requests.post(url, data=data, auth=(client_id, client_secret))
@@ -23,58 +19,73 @@ def get_zoom_token(account_id, client_id, client_secret):
         return response.json()['access_token']
     return None
 
-def get_meeting_instances(token, meeting_id, start_date, end_date):
-    """Get all meeting instances in date range"""
+def get_daily_meeting_data(token, meeting_id, target_date):
     headers = {'Authorization': f'Bearer {token}'}
     
     # Try instances API first
     instances_url = f"https://api.zoom.us/v2/past_meetings/{meeting_id}/instances"
-    params = {'from': start_date, 'to': end_date}
+    params = {'from': target_date, 'to': target_date}
     
-    response = requests.get(instances_url, headers=headers, params=params)
-    if response.status_code == 200:
-        return response.json().get('meetings', [])
-    
-    # Fallback: Try direct meeting report for single meeting
-    meeting_url = f"https://api.zoom.us/v2/report/meetings/{meeting_id}"
-    response = requests.get(meeting_url, headers=headers)
-    if response.status_code == 200:
-        meeting_data = response.json()
-        meeting_start = meeting_data.get('start_time', '')
-        if meeting_start and start_date <= meeting_start[:10] <= end_date:
-            return [{'uuid': meeting_id, 'start_time': meeting_start}]
-    
-    return []
-
-def get_participants(token, meeting_uuid):
-    """Get participants for a meeting"""
-    headers = {'Authorization': f'Bearer {token}'}
-    participants_url = f"https://api.zoom.us/v2/report/meetings/{meeting_uuid}/participants"
+    instances_response = requests.get(instances_url, headers=headers, params=params)
     
     all_participants = []
-    next_page_token = None
     
-    while True:
-        params = {'page_size': 300}
-        if next_page_token:
-            params['next_page_token'] = next_page_token
+    if instances_response.status_code == 200:
+        instances_data = instances_response.json()
+        meetings = instances_data.get('meetings', [])
         
-        response = requests.get(participants_url, headers=headers, params=params)
-        if response.status_code != 200:
-            break
+        for meeting in meetings:
+            instance_uuid = meeting.get('uuid')
+            
+            # Get participants for this instance
+            participants_url = f"https://api.zoom.us/v2/report/meetings/{instance_uuid}/participants"
+            
+            # Handle pagination
+            next_page_token = None
+            while True:
+                params = {'page_size': 300}
+                if next_page_token:
+                    params['next_page_token'] = next_page_token
+                
+                participants_response = requests.get(participants_url, headers=headers, params=params)
+                
+                if participants_response.status_code == 200:
+                    participants_data = participants_response.json()
+                    participants = participants_data.get('participants', [])
+                    all_participants.extend(participants)
+                    
+                    next_page_token = participants_data.get('next_page_token')
+                    if not next_page_token:
+                        break
+                else:
+                    break
+    
+    # Fallback: Try direct meeting report
+    if not all_participants:
+        direct_url = f"https://api.zoom.us/v2/report/meetings/{meeting_id}/participants"
         
-        data = response.json()
-        participants = data.get('participants', [])
-        all_participants.extend(participants)
-        
-        next_page_token = data.get('next_page_token')
-        if not next_page_token:
-            break
+        next_page_token = None
+        while True:
+            params = {'page_size': 300}
+            if next_page_token:
+                params['next_page_token'] = next_page_token
+            
+            direct_response = requests.get(direct_url, headers=headers, params=params)
+            
+            if direct_response.status_code == 200:
+                participants_data = direct_response.json()
+                participants = participants_data.get('participants', [])
+                all_participants.extend(participants)
+                
+                next_page_token = participants_data.get('next_page_token')
+                if not next_page_token:
+                    break
+            else:
+                break
     
     return all_participants
 
 def parse_env_file(uploaded_file):
-    """Parse uploaded .env file"""
     content = uploaded_file.read().decode('utf-8')
     env_vars = {}
     for line in content.split('\n'):
@@ -84,49 +95,32 @@ def parse_env_file(uploaded_file):
     return env_vars
 
 def format_duration(minutes):
-    """Convert minutes to hours and minutes format"""
     if minutes >= 60:
         hours = minutes // 60
         mins = minutes % 60
-        if mins > 0:
-            return f"{hours}h {mins}m"
-        else:
-            return f"{hours}h"
-    else:
-        return f"{minutes}m"
+        return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
+    return f"{minutes}m"
 
 # Main App
 st.title("🎯 Zoom Attendance Tracker")
-st.markdown("### Track participant attendance across multiple sessions")
+st.markdown("### Track participant attendance")
 
-# Sidebar for inputs
+# Sidebar
 with st.sidebar:
     st.header("📋 Configuration")
     
-    # Upload .env file
     uploaded_file = st.file_uploader("Upload .env file", type=['env'])
     
     if uploaded_file:
         env_vars = parse_env_file(uploaded_file)
         st.success("✅ Environment file loaded!")
         
-        # Meeting ID input
         meeting_id = st.text_input("Meeting ID", value=env_vars.get('ZOOM_MEETING_ID', ''))
+        target_date = st.date_input("Meeting Date", value=datetime.now())
         
-        # Date and time range
-        col1, col2 = st.columns(2)
-        with col1:
-            start_date = st.date_input("Start Date", value=datetime.now() - timedelta(days=7))
-            start_time = st.time_input("Start Time", value=datetime.strptime("00:00", "%H:%M").time())
-        with col2:
-            end_date = st.date_input("End Date", value=datetime.now())
-            end_time = st.time_input("End Time", value=datetime.strptime("23:59", "%H:%M").time())
-        
-        # Fetch button
         if st.button("🚀 Fetch Attendance Data", type="primary"):
             if meeting_id:
                 with st.spinner("Fetching data..."):
-                    # Get token
                     token = get_zoom_token(
                         env_vars.get('ZOOM_ACCOUNT_ID'),
                         env_vars.get('ZOOM_CLIENT_ID'),
@@ -134,228 +128,94 @@ with st.sidebar:
                     )
                     
                     if token:
-                        # Combine date and time
-                        start_datetime = datetime.combine(start_date, start_time)
-                        end_datetime = datetime.combine(end_date, end_time)
-                        
-                        # Get meeting instances
-                        instances = get_meeting_instances(
-                            token, meeting_id, 
-                            start_date.strftime('%Y-%m-%d'),
-                            end_date.strftime('%Y-%m-%d')
+                        participants = get_daily_meeting_data(
+                            token, meeting_id, target_date.strftime('%Y-%m-%d')
                         )
                         
-                        if instances:
-                            st.session_state['attendance_data'] = []
-                            total_found = 0
-                            
-                            progress_bar = st.progress(0)
-                            status_text = st.empty()
-                            
-                            for i, instance in enumerate(instances):
-                                status_text.text(f"Processing instance {i+1}/{len(instances)}...")
-                                participants = get_participants(token, instance['uuid'])
-                                
-                                for p in participants:
-                                    join_time_str = p.get('join_time', '')
-                                    leave_time_str = p.get('leave_time', '')
-                                    
-                                    # Filter by time if join_time is available
-                                    if join_time_str:
-                                        try:
-                                            join_dt = datetime.fromisoformat(join_time_str.replace('Z', '+00:00'))
-                                            # Check if within time range
-                                            if start_datetime <= join_dt.replace(tzinfo=None) <= end_datetime:
-                                                st.session_state['attendance_data'].append({
-                                                    'name': p.get('name', 'Unknown'),
-                                                    'email': p.get('user_email', 'N/A'),
-                                                    'join_time': join_time_str,
-                                                    'leave_time': leave_time_str,
-                                                    'duration': p.get('duration', 0),
-                                                    'meeting_date': instance['start_time'][:10] if instance.get('start_time') else 'Unknown',
-                                                    'instance_uuid': instance['uuid']
-                                                })
-                                                total_found += 1
-                                        except:
-                                            # If time parsing fails, include the record
-                                            st.session_state['attendance_data'].append({
-                                                'name': p.get('name', 'Unknown'),
-                                                'email': p.get('user_email', 'N/A'),
-                                                'join_time': join_time_str,
-                                                'leave_time': leave_time_str,
-                                                'duration': p.get('duration', 0),
-                                                'meeting_date': instance['start_time'][:10] if instance.get('start_time') else 'Unknown',
-                                                'instance_uuid': instance['uuid']
-                                            })
-                                            total_found += 1
-                                    else:
-                                        # No join time, include anyway
-                                        st.session_state['attendance_data'].append({
-                                            'name': p.get('name', 'Unknown'),
-                                            'email': p.get('user_email', 'N/A'),
-                                            'join_time': join_time_str,
-                                            'leave_time': leave_time_str,
-                                            'duration': p.get('duration', 0),
-                                            'meeting_date': instance['start_time'][:10] if instance.get('start_time') else 'Unknown',
-                                            'instance_uuid': instance['uuid']
-                                        })
-                                        total_found += 1
-                                
-                                progress_bar.progress((i + 1) / len(instances))
-                            
-                            progress_bar.empty()
-                            status_text.empty()
-                            
-                            st.success(f"✅ Found {total_found} attendance records from {len(instances)} meeting instances!")
+                        if participants:
+                            st.session_state['participants'] = participants
+                            st.success(f"✅ Found {len(participants)} participants!")
                         else:
-                            st.error("❌ No meeting data found for the selected date range")
+                            st.error("❌ No participants found")
                     else:
-                        st.error("❌ Failed to authenticate with Zoom API")
+                        st.error("❌ Authentication failed")
             else:
-                st.error("❌ Please enter a Meeting ID")
+                st.error("❌ Please enter Meeting ID")
 
 # Main content
-if 'attendance_data' in st.session_state and st.session_state['attendance_data']:
-    df = pd.DataFrame(st.session_state['attendance_data'])
+if 'participants' in st.session_state:
+    participants = st.session_state['participants']
     
-    # Process data for unique users
-    user_summary = defaultdict(lambda: {'total_duration': 0, 'sessions': [], 'email': 'N/A'})
-    
-    for _, row in df.iterrows():
-        key = row['email'] if row['email'] != 'N/A' else row['name']
-        user_summary[key]['total_duration'] += row['duration']
-        user_summary[key]['sessions'].append({
-            'date': row['meeting_date'],
-            'duration': row['duration'],
-            'join_time': row['join_time'],
-            'leave_time': row['leave_time']
-        })
-        user_summary[key]['email'] = row['email']
-        user_summary[key]['name'] = row['name']
-    
-    # Create summary DataFrame
-    summary_data = []
-    for user_key, data in user_summary.items():
-        total_duration = data['total_duration']
-        summary_data.append({
-            'Name': data['name'],
-            'Email': data['email'],
-            'Total Duration': format_duration(total_duration),
-            'Total Duration (min)': total_duration,
-            'Total Sessions': len(data['sessions']),
-            'Avg Duration/Session': format_duration(round(total_duration / len(data['sessions']))),
-            'Sessions': data['sessions']
+    # Create DataFrame
+    data = []
+    for p in participants:
+        data.append({
+            'Name': p.get('name', 'Unknown'),
+            'Email': p.get('user_email', 'N/A'),
+            'Join Time': p.get('join_time', ''),
+            'Leave Time': p.get('leave_time', ''),
+            'Duration (min)': p.get('duration', 0),
+            'Duration': format_duration(p.get('duration', 0))
         })
     
-    summary_df = pd.DataFrame(summary_data)
+    df = pd.DataFrame(data)
     
-    # Dashboard
+    # Metrics
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
-        st.metric("👥 Total Participants", len(summary_df))
-    
+        st.metric("👥 Total Participants", len(df))
     with col2:
-        st.metric("📅 Total Sessions", len(df['meeting_date'].unique()))
-    
+        st.metric("⏱️ Total Hours", f"{df['Duration (min)'].sum() / 60:.1f}")
     with col3:
-        st.metric("⏱️ Total Hours", f"{summary_df['Total Duration (min)'].sum() / 60:.1f}")
-    
+        st.metric("📊 Avg Duration", format_duration(int(df['Duration (min)'].mean())))
     with col4:
-        st.metric("📊 Avg Duration/Person", format_duration(int(summary_df['Total Duration (min)'].mean())))
+        st.metric("🏆 Max Duration", format_duration(df['Duration (min)'].max()))
     
-    # Charts
-    col1, col2 = st.columns(2)
+    # Chart
+    fig = px.bar(df.head(15), x='Name', y='Duration (min)',
+                title="📊 Participant Duration",
+                color='Duration (min)',
+                color_continuous_scale='viridis')
+    fig.update_layout(xaxis_tickangle=45)
+    st.plotly_chart(fig, width='stretch')
     
-    with col1:
-        # Duration distribution
-        fig = px.histogram(summary_df, x='Total Duration (min)', 
-                          title="📊 Duration Distribution",
-                          color_discrete_sequence=['#FF6B6B'])
-        st.plotly_chart(fig, width='stretch')
+    # Table
+    st.subheader("📋 Detailed Report")
     
-    with col2:
-        # Sessions per user
-        fig = px.bar(summary_df.head(10), x='Name', y='Total Sessions',
-                    title="🏆 Top 10 Most Active Participants",
-                    color='Total Sessions',
-                    color_continuous_scale='viridis')
-        fig.update_layout(xaxis_tickangle=45)
-        st.plotly_chart(fig, width='stretch')
+    search = st.text_input("🔍 Search participants")
     
-    # Detailed table
-    st.subheader("📋 Detailed Attendance Report")
-    
-    # Search functionality
-    search_term = st.text_input("🔍 Search participants", placeholder="Enter name or email...")
-    
-    if search_term:
-        filtered_df = summary_df[
-            summary_df['Name'].str.contains(search_term, case=False, na=False) |
-            summary_df['Email'].str.contains(search_term, case=False, na=False)
-        ]
+    if search:
+        filtered_df = df[df['Name'].str.contains(search, case=False, na=False)]
     else:
-        filtered_df = summary_df
+        filtered_df = df
     
-    # Display table without Sessions column for cleaner view
-    display_df = filtered_df[['Name', 'Email', 'Total Duration', 'Total Sessions', 'Avg Duration/Session']]
+    display_df = filtered_df[['Name', 'Email', 'Duration', 'Join Time', 'Leave Time']]
+    
     st.dataframe(
         display_df,
         width='stretch',
         column_config={
-            "Name": st.column_config.TextColumn("👤 Name", width="medium"),
-            "Email": st.column_config.TextColumn("📧 Email", width="medium"),
-            "Total Duration": st.column_config.TextColumn("⏱️ Duration", width="small"),
-            "Total Sessions": st.column_config.NumberColumn("📅 Sessions"),
-            "Avg Duration/Session": st.column_config.TextColumn("📊 Avg/Session", width="small")
+            "Name": st.column_config.TextColumn("👤 Name"),
+            "Email": st.column_config.TextColumn("📧 Email"),
+            "Duration": st.column_config.TextColumn("⏱️ Duration"),
+            "Join Time": st.column_config.TextColumn("🟢 Join"),
+            "Leave Time": st.column_config.TextColumn("🔴 Leave")
         }
     )
     
-    # Expandable session details
-    st.subheader("📅 Session-wise Details")
-    
-    selected_user = st.selectbox("Select participant for detailed view:", 
-                                options=filtered_df['Name'].tolist())
-    
-    if selected_user:
-        user_sessions = filtered_df[filtered_df['Name'] == selected_user]['Sessions'].iloc[0]
-        
-        sessions_df = pd.DataFrame(user_sessions)
-        sessions_df['join_time'] = sessions_df['join_time'].apply(
-            lambda x: x.split('T')[1][:8] if 'T' in str(x) else str(x)
-        )
-        sessions_df['leave_time'] = sessions_df['leave_time'].apply(
-            lambda x: x.split('T')[1][:8] if 'T' in str(x) else 'N/A'
-        )
-        
-        sessions_df['duration_formatted'] = sessions_df['duration'].apply(format_duration)
-        sessions_df = sessions_df[['date', 'duration_formatted', 'join_time', 'leave_time']]
-        
-        st.dataframe(
-            sessions_df,
-            width='stretch',
-            column_config={
-                "date": st.column_config.DateColumn("📅 Date"),
-                "duration_formatted": st.column_config.TextColumn("⏱️ Duration"),
-                "join_time": st.column_config.TextColumn("🟢 Join Time"),
-                "leave_time": st.column_config.TextColumn("🔴 Leave Time")
-            }
-        )
-    
-    # Download button
+    # Download
     csv = display_df.to_csv(index=False)
     st.download_button(
-        label="📥 Download Report as CSV",
+        "📥 Download CSV",
         data=csv,
-        file_name=f"zoom_attendance_{start_date}_{end_date}.csv",
+        file_name=f"zoom_attendance_{target_date}.csv",
         mime="text/csv"
     )
 
 else:
-    st.info("👆 Please upload your .env file and configure the settings in the sidebar to get started!")
+    st.info("👆 Upload your .env file and fetch data to get started!")
     
-    # Sample .env file format
-    st.subheader("📝 Sample .env file format:")
+    st.subheader("📝 Sample .env format:")
     st.code("""
 ZOOM_ACCOUNT_ID=your_account_id
 ZOOM_CLIENT_ID=your_client_id
