@@ -35,12 +35,14 @@ def get_meeting_instances(token, meeting_id, start_date, end_date):
     if response.status_code == 200:
         return response.json().get('meetings', [])
     
-    # Fallback to single meeting
+    # Fallback: Try direct meeting report for single meeting
     meeting_url = f"https://api.zoom.us/v2/report/meetings/{meeting_id}"
     response = requests.get(meeting_url, headers=headers)
     if response.status_code == 200:
         meeting_data = response.json()
-        return [{'uuid': meeting_id, 'start_time': meeting_data.get('start_time')}]
+        meeting_start = meeting_data.get('start_time', '')
+        if meeting_start and start_date <= meeting_start[:10] <= end_date:
+            return [{'uuid': meeting_id, 'start_time': meeting_start}]
     
     return []
 
@@ -81,6 +83,18 @@ def parse_env_file(uploaded_file):
             env_vars[key.strip()] = value.strip()
     return env_vars
 
+def format_duration(minutes):
+    """Convert minutes to hours and minutes format"""
+    if minutes >= 60:
+        hours = minutes // 60
+        mins = minutes % 60
+        if mins > 0:
+            return f"{hours}h {mins}m"
+        else:
+            return f"{hours}h"
+    else:
+        return f"{minutes}m"
+
 # Main App
 st.title("🎯 Zoom Attendance Tracker")
 st.markdown("### Track participant attendance across multiple sessions")
@@ -99,12 +113,14 @@ with st.sidebar:
         # Meeting ID input
         meeting_id = st.text_input("Meeting ID", value=env_vars.get('ZOOM_MEETING_ID', ''))
         
-        # Date range
+        # Date and time range
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("Start Date", value=datetime.now() - timedelta(days=7))
+            start_time = st.time_input("Start Time", value=datetime.strptime("00:00", "%H:%M").time())
         with col2:
             end_date = st.date_input("End Date", value=datetime.now())
+            end_time = st.time_input("End Time", value=datetime.strptime("23:59", "%H:%M").time())
         
         # Fetch button
         if st.button("🚀 Fetch Attendance Data", type="primary"):
@@ -118,6 +134,10 @@ with st.sidebar:
                     )
                     
                     if token:
+                        # Combine date and time
+                        start_datetime = datetime.combine(start_date, start_time)
+                        end_datetime = datetime.combine(end_date, end_time)
+                        
                         # Get meeting instances
                         instances = get_meeting_instances(
                             token, meeting_id, 
@@ -127,20 +147,66 @@ with st.sidebar:
                         
                         if instances:
                             st.session_state['attendance_data'] = []
+                            total_found = 0
                             
-                            for instance in instances:
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            for i, instance in enumerate(instances):
+                                status_text.text(f"Processing instance {i+1}/{len(instances)}...")
                                 participants = get_participants(token, instance['uuid'])
+                                
                                 for p in participants:
-                                    st.session_state['attendance_data'].append({
-                                        'name': p.get('name', 'Unknown'),
-                                        'email': p.get('user_email', 'N/A'),
-                                        'join_time': p.get('join_time', ''),
-                                        'leave_time': p.get('leave_time', ''),
-                                        'duration': p.get('duration', 0),
-                                        'meeting_date': instance['start_time'][:10] if instance.get('start_time') else 'Unknown'
-                                    })
+                                    join_time_str = p.get('join_time', '')
+                                    leave_time_str = p.get('leave_time', '')
+                                    
+                                    # Filter by time if join_time is available
+                                    if join_time_str:
+                                        try:
+                                            join_dt = datetime.fromisoformat(join_time_str.replace('Z', '+00:00'))
+                                            # Check if within time range
+                                            if start_datetime <= join_dt.replace(tzinfo=None) <= end_datetime:
+                                                st.session_state['attendance_data'].append({
+                                                    'name': p.get('name', 'Unknown'),
+                                                    'email': p.get('user_email', 'N/A'),
+                                                    'join_time': join_time_str,
+                                                    'leave_time': leave_time_str,
+                                                    'duration': p.get('duration', 0),
+                                                    'meeting_date': instance['start_time'][:10] if instance.get('start_time') else 'Unknown',
+                                                    'instance_uuid': instance['uuid']
+                                                })
+                                                total_found += 1
+                                        except:
+                                            # If time parsing fails, include the record
+                                            st.session_state['attendance_data'].append({
+                                                'name': p.get('name', 'Unknown'),
+                                                'email': p.get('user_email', 'N/A'),
+                                                'join_time': join_time_str,
+                                                'leave_time': leave_time_str,
+                                                'duration': p.get('duration', 0),
+                                                'meeting_date': instance['start_time'][:10] if instance.get('start_time') else 'Unknown',
+                                                'instance_uuid': instance['uuid']
+                                            })
+                                            total_found += 1
+                                    else:
+                                        # No join time, include anyway
+                                        st.session_state['attendance_data'].append({
+                                            'name': p.get('name', 'Unknown'),
+                                            'email': p.get('user_email', 'N/A'),
+                                            'join_time': join_time_str,
+                                            'leave_time': leave_time_str,
+                                            'duration': p.get('duration', 0),
+                                            'meeting_date': instance['start_time'][:10] if instance.get('start_time') else 'Unknown',
+                                            'instance_uuid': instance['uuid']
+                                        })
+                                        total_found += 1
+                                
+                                progress_bar.progress((i + 1) / len(instances))
                             
-                            st.success(f"✅ Found {len(st.session_state['attendance_data'])} attendance records!")
+                            progress_bar.empty()
+                            status_text.empty()
+                            
+                            st.success(f"✅ Found {total_found} attendance records from {len(instances)} meeting instances!")
                         else:
                             st.error("❌ No meeting data found for the selected date range")
                     else:
@@ -170,12 +236,14 @@ if 'attendance_data' in st.session_state and st.session_state['attendance_data']
     # Create summary DataFrame
     summary_data = []
     for user_key, data in user_summary.items():
+        total_duration = data['total_duration']
         summary_data.append({
             'Name': data['name'],
             'Email': data['email'],
-            'Total Duration (min)': data['total_duration'],
+            'Total Duration': format_duration(total_duration),
+            'Total Duration (min)': total_duration,
             'Total Sessions': len(data['sessions']),
-            'Avg Duration/Session': round(data['total_duration'] / len(data['sessions']), 1),
+            'Avg Duration/Session': format_duration(round(total_duration / len(data['sessions']))),
             'Sessions': data['sessions']
         })
     
@@ -194,7 +262,7 @@ if 'attendance_data' in st.session_state and st.session_state['attendance_data']
         st.metric("⏱️ Total Hours", f"{summary_df['Total Duration (min)'].sum() / 60:.1f}")
     
     with col4:
-        st.metric("📊 Avg Duration/Person", f"{summary_df['Total Duration (min)'].mean():.1f} min")
+        st.metric("📊 Avg Duration/Person", format_duration(int(summary_df['Total Duration (min)'].mean())))
     
     # Charts
     col1, col2 = st.columns(2)
@@ -230,16 +298,16 @@ if 'attendance_data' in st.session_state and st.session_state['attendance_data']
         filtered_df = summary_df
     
     # Display table without Sessions column for cleaner view
-    display_df = filtered_df.drop('Sessions', axis=1)
+    display_df = filtered_df[['Name', 'Email', 'Total Duration', 'Total Sessions', 'Avg Duration/Session']]
     st.dataframe(
         display_df,
         width='stretch',
         column_config={
             "Name": st.column_config.TextColumn("👤 Name", width="medium"),
             "Email": st.column_config.TextColumn("📧 Email", width="medium"),
-            "Total Duration (min)": st.column_config.NumberColumn("⏱️ Duration", format="%d min"),
+            "Total Duration": st.column_config.TextColumn("⏱️ Duration", width="small"),
             "Total Sessions": st.column_config.NumberColumn("📅 Sessions"),
-            "Avg Duration/Session": st.column_config.NumberColumn("📊 Avg/Session", format="%.1f min")
+            "Avg Duration/Session": st.column_config.TextColumn("📊 Avg/Session", width="small")
         }
     )
     
@@ -260,12 +328,15 @@ if 'attendance_data' in st.session_state and st.session_state['attendance_data']
             lambda x: x.split('T')[1][:8] if 'T' in str(x) else 'N/A'
         )
         
+        sessions_df['duration_formatted'] = sessions_df['duration'].apply(format_duration)
+        sessions_df = sessions_df[['date', 'duration_formatted', 'join_time', 'leave_time']]
+        
         st.dataframe(
             sessions_df,
             width='stretch',
             column_config={
                 "date": st.column_config.DateColumn("📅 Date"),
-                "duration": st.column_config.NumberColumn("⏱️ Duration (min)"),
+                "duration_formatted": st.column_config.TextColumn("⏱️ Duration"),
                 "join_time": st.column_config.TextColumn("🟢 Join Time"),
                 "leave_time": st.column_config.TextColumn("🔴 Leave Time")
             }
