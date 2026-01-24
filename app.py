@@ -95,11 +95,7 @@ def parse_env_file(uploaded_file):
     return env_vars
 
 def format_duration(minutes):
-    if minutes >= 60:
-        hours = minutes // 60
-        mins = minutes % 60
-        return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
-    return f"{minutes}m"
+    return f"{minutes} min"
 
 # Main App
 st.title("🎯 Zoom Attendance Tracker")
@@ -146,16 +142,30 @@ with st.sidebar:
 if 'participants' in st.session_state:
     participants = st.session_state['participants']
     
-    # Create DataFrame
-    data = []
+    # Remove duplicates based on email (or name if no email)
+    unique_participants = {}
     for p in participants:
+        email = p.get('user_email', 'N/A')
+        name = p.get('name', 'Unknown')
+        key = email if email != 'N/A' else name
+        
+        if key not in unique_participants:
+            unique_participants[key] = p
+        else:
+            # If duplicate, add duration to existing
+            unique_participants[key]['duration'] = unique_participants[key].get('duration', 0) + p.get('duration', 0)
+    
+    # Create DataFrame from unique participants
+    data = []
+    for p in unique_participants.values():
+        duration_min = p.get('duration', 0)
         data.append({
             'Name': p.get('name', 'Unknown'),
             'Email': p.get('user_email', 'N/A'),
             'Join Time': p.get('join_time', ''),
             'Leave Time': p.get('leave_time', ''),
-            'Duration (min)': p.get('duration', 0),
-            'Duration': format_duration(p.get('duration', 0))
+            'Duration (min)': duration_min,
+            'Duration': f"{duration_min} min"
         })
     
     df = pd.DataFrame(data)
@@ -163,13 +173,13 @@ if 'participants' in st.session_state:
     # Metrics
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("👥 Total Participants", len(df))
+        st.metric("👥 Unique Participants", len(df))
     with col2:
         st.metric("⏱️ Total Hours", f"{df['Duration (min)'].sum() / 60:.1f}")
     with col3:
-        st.metric("📊 Avg Duration", format_duration(int(df['Duration (min)'].mean())))
+        st.metric("📊 Avg Duration", f"{int(df['Duration (min)'].mean())} min")
     with col4:
-        st.metric("🏆 Max Duration", format_duration(df['Duration (min)'].max()))
+        st.metric("🏆 Max Duration", f"{df['Duration (min)'].max()} min")
     
     # Chart
     fig = px.bar(df.head(15), x='Name', y='Duration (min)',
