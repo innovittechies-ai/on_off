@@ -94,7 +94,22 @@ def parse_env_file(uploaded_file):
             env_vars[key.strip()] = value.strip()
     return env_vars
 
-def format_duration(minutes):
+def convert_to_ist(utc_time_str):
+    """Convert UTC time to IST"""
+    if not utc_time_str or utc_time_str == '':
+        return 'N/A'
+    try:
+        # Parse UTC time
+        utc_time = datetime.fromisoformat(utc_time_str.replace('Z', '+00:00'))
+        # Convert to IST (+5:30)
+        ist_time = utc_time + timedelta(hours=5, minutes=30)
+        return ist_time.strftime('%Y-%m-%d %H:%M:%S IST')
+    except:
+        return utc_time_str
+
+def format_duration(seconds):
+    """Convert seconds to minutes"""
+    minutes = seconds // 60
     return f"{minutes} min"
 
 # Main App
@@ -179,14 +194,16 @@ if 'participants' in st.session_state:
     # Create DataFrame from unique participants
     data = []
     for key, p in unique_participants.items():
-        duration_min = p['duration']
+        duration_seconds = p['duration']
+        duration_minutes = duration_seconds // 60  # Convert seconds to minutes
+        
         data.append({
             'Name': p['name'],
             'Email': p['email'],
-            'Join Time': p['join_time'],
-            'Leave Time': p['leave_time'],
-            'Duration (min)': duration_min,
-            'Duration': f"{duration_min} min"
+            'Join Time IST': convert_to_ist(p['join_time']),
+            'Leave Time IST': convert_to_ist(p['leave_time']),
+            'Duration (min)': duration_minutes,
+            'Duration': f"{duration_minutes} min"
         })
     
     df = pd.DataFrame(data)
@@ -220,7 +237,7 @@ if 'participants' in st.session_state:
     else:
         filtered_df = df
     
-    display_df = filtered_df[['Name', 'Email', 'Duration', 'Join Time', 'Leave Time']]
+    display_df = filtered_df[['Name', 'Email', 'Duration', 'Join Time IST', 'Leave Time IST']]
     
     st.dataframe(
         display_df,
@@ -229,8 +246,8 @@ if 'participants' in st.session_state:
             "Name": st.column_config.TextColumn("👤 Name"),
             "Email": st.column_config.TextColumn("📧 Email"),
             "Duration": st.column_config.TextColumn("⏱️ Duration"),
-            "Join Time": st.column_config.TextColumn("🟢 Join"),
-            "Leave Time": st.column_config.TextColumn("🔴 Leave")
+            "Join Time IST": st.column_config.TextColumn("🟢 Join (IST)"),
+            "Leave Time IST": st.column_config.TextColumn("🔴 Leave (IST)")
         }
     )
     
