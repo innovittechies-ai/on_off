@@ -209,14 +209,12 @@ if 'participants' in st.session_state:
     df = pd.DataFrame(data)
     
     # Metrics
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("👥 Unique Participants", len(df))
     with col2:
-        st.metric("⏱️ Total Hours", f"{df['Duration (min)'].sum() / 60:.1f}")
-    with col3:
         st.metric("📊 Avg Duration", f"{int(df['Duration (min)'].mean()) if len(df) > 0 else 0} min")
-    with col4:
+    with col3:
         st.metric("🏆 Max Duration", f"{df['Duration (min)'].max() if len(df) > 0 else 0} min")
     
     # Chart
