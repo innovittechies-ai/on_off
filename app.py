@@ -149,6 +149,7 @@ if 'participants' in st.session_state:
     for p in participants:
         email = p.get('user_email', 'N/A')
         name = p.get('name', 'Unknown')
+        duration = p.get('duration', 0)
         
         # Use email as primary key, fallback to name
         if email != 'N/A' and email != '':
@@ -162,11 +163,16 @@ if 'participants' in st.session_state:
                 'email': email,
                 'join_time': p.get('join_time', ''),
                 'leave_time': p.get('leave_time', ''),
-                'duration': p.get('duration', 0)
+                'duration': duration,
+                'max_duration': duration  # Track the longest single session
             }
         else:
-            # If duplicate, add duration to existing
-            unique_participants[key]['duration'] += p.get('duration', 0)
+            # For duplicates, keep the longest duration (not sum)
+            if duration > unique_participants[key]['max_duration']:
+                unique_participants[key]['duration'] = duration
+                unique_participants[key]['max_duration'] = duration
+                unique_participants[key]['join_time'] = p.get('join_time', '')
+                unique_participants[key]['leave_time'] = p.get('leave_time', '')
     
     st.write(f"Debug: Unique participants after deduplication: {len(unique_participants)}")
     
