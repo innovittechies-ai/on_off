@@ -19,6 +19,27 @@ def get_zoom_token(account_id, client_id, client_secret):
         return response.json()['access_token']
     return None
 
+def get_all_meetings_for_date(token, target_date):
+    """Get all meetings for a specific date"""
+    headers = {'Authorization': f'Bearer {token}'}
+    all_meetings = []
+    
+    # Try to get past meetings
+    past_meetings_url = f"https://api.zoom.us/v2/users/me/meetings"
+    params = {'type': 'previous_meetings', 'page_size': 300}
+    
+    response = requests.get(past_meetings_url, headers=headers, params=params)
+    if response.status_code == 200:
+        meetings_data = response.json()
+        meetings = meetings_data.get('meetings', [])
+        
+        for meeting in meetings:
+            start_time = meeting.get('start_time', '')
+            if start_time and start_time[:10] == target_date:
+                all_meetings.append(meeting)
+    
+    return all_meetings
+
 def get_daily_meeting_data(token, meeting_id, target_date):
     headers = {'Authorization': f'Bearer {token}'}
     
@@ -85,6 +106,36 @@ def get_daily_meeting_data(token, meeting_id, target_date):
     
     return all_participants
 
+def get_participants_with_time_filter(token, meeting_id, start_time_filter=None, end_time_filter=None):
+    """Get participants with optional time filtering"""
+    participants = get_daily_meeting_data(token, meeting_id, '')
+    
+    if not start_time_filter and not end_time_filter:
+        return participants
+    
+    filtered_participants = []
+    for p in participants:
+        join_time_str = p.get('join_time', '')
+        if join_time_str:
+            try:
+                join_time = datetime.fromisoformat(join_time_str.replace('Z', '+00:00'))
+                join_time_ist = join_time + timedelta(hours=5, minutes=30)
+                join_hour_min = join_time_ist.time()
+                
+                # Check time filters
+                if start_time_filter and join_hour_min < start_time_filter:
+                    continue
+                if end_time_filter and join_hour_min > end_time_filter:
+                    continue
+                    
+                filtered_participants.append(p)
+            except:
+                filtered_participants.append(p)  # Include if time parsing fails
+        else:
+            filtered_participants.append(p)  # Include if no join time
+    
+    return filtered_participants
+
 def parse_env_file(uploaded_file):
     content = uploaded_file.read().decode('utf-8')
     env_vars = {}
@@ -114,11 +165,11 @@ def format_duration(seconds):
 
 # Main App
 st.title("🎯 Zoom Attendance Tracker")
-st.markdown("### Track participant attendance")
+st.markdown("### Smart Analytics Dashboard")
 
 # Sidebar
 with st.sidebar:
-    st.header("📋 Configuration")
+    st.header("📅 Smart Analytics")
     
     uploaded_file = st.file_uploader("Upload .env file", type=['env'])
     
@@ -126,12 +177,74 @@ with st.sidebar:
         env_vars = parse_env_file(uploaded_file)
         st.success("✅ Environment file loaded!")
         
-        meeting_id = st.text_input("Meeting ID", value=env_vars.get('ZOOM_MEETING_ID', ''))
-        target_date = st.date_input("Meeting Date", value=datetime.now())
+        # Analytics mode selection
+        mode = st.radio(
+            "Select Mode:",
+            ["Single Meeting", "Day-wise Analytics"]
+        )
         
-        if st.button("🚀 Fetch Attendance Data", type="primary"):
-            if meeting_id:
-                with st.spinner("Fetching data..."):
+        if mode == "Single Meeting":
+            meeting_id = st.text_input("Meeting ID", value=env_vars.get('ZOOM_MEETING_ID', ''))
+            target_date = st.date_input("Meeting Date", value=datetime.now())
+            
+            # Optional time filters
+            st.subheader("⏰ Time Filters (Optional)")
+            use_time_filter = st.checkbox("Enable time filtering")
+            
+            start_time_filter = None
+            end_time_filter = None
+            
+            if use_time_filter:
+                col1, col2 = st.columns(2)
+                with col1:
+                    start_time_filter = st.time_input("Start Time (IST)", value=datetime.strptime("09:00", "%H:%M").time())
+                with col2:
+                    end_time_filter = st.time_input("End Time (IST)", value=datetime.strptime("18:00", "%H:%M").time())
+            
+            if st.button("🚀 Fetch Single Meeting Data", type="primary"):
+                if meeting_id:
+                    with st.spinner("Fetching data..."):
+                        token = get_zoom_token(
+                            env_vars.get('ZOOM_ACCOUNT_ID'),
+                            env_vars.get('ZOOM_CLIENT_ID'),
+                            env_vars.get('ZOOM_CLIENT_SECRET')
+                        )
+                        
+                        if token:
+                            participants = get_participants_with_time_filter(
+                                token, meeting_id, start_time_filter, end_time_filter
+                            )
+                            
+                            if participants:
+                                st.session_state['participants'] = participants
+                                st.session_state['mode'] = 'single'
+                                st.success(f"✅ Found {len(participants)} participants!")
+                            else:
+                                st.error("❌ No participants found")
+                        else:
+                            st.error("❌ Authentication failed")
+                else:
+                    st.error("❌ Please enter Meeting ID")
+        
+        else:  # Day-wise Analytics
+            target_date = st.date_input("Select Date", value=datetime.now())
+            
+            # Optional time filters
+            st.subheader("⏰ Time Filters (Optional)")
+            use_time_filter = st.checkbox("Enable time filtering", key="day_time_filter")
+            
+            start_time_filter = None
+            end_time_filter = None
+            
+            if use_time_filter:
+                col1, col2 = st.columns(2)
+                with col1:
+                    start_time_filter = st.time_input("Start Time (IST)", value=datetime.strptime("09:00", "%H:%M").time(), key="day_start")
+                with col2:
+                    end_time_filter = st.time_input("End Time (IST)", value=datetime.strptime("18:00", "%H:%M").time(), key="day_end")
+            
+            if st.button("📈 Fetch Day-wise Analytics", type="primary"):
+                with st.spinner("Fetching all meetings for the day..."):
                     token = get_zoom_token(
                         env_vars.get('ZOOM_ACCOUNT_ID'),
                         env_vars.get('ZOOM_CLIENT_ID'),
@@ -139,19 +252,32 @@ with st.sidebar:
                     )
                     
                     if token:
-                        participants = get_daily_meeting_data(
-                            token, meeting_id, target_date.strftime('%Y-%m-%d')
-                        )
+                        # Get all meetings for the date
+                        meetings = get_all_meetings_for_date(token, target_date.strftime('%Y-%m-%d'))
                         
-                        if participants:
-                            st.session_state['participants'] = participants
-                            st.success(f"✅ Found {len(participants)} participants!")
+                        if meetings:
+                            st.write(f"Found {len(meetings)} meetings on {target_date}")
+                            
+                            all_participants = []
+                            for meeting in meetings:
+                                meeting_id = meeting.get('id')
+                                st.write(f"Processing meeting: {meeting.get('topic', 'Unknown')} (ID: {meeting_id})")
+                                
+                                participants = get_participants_with_time_filter(
+                                    token, str(meeting_id), start_time_filter, end_time_filter
+                                )
+                                all_participants.extend(participants)
+                            
+                            if all_participants:
+                                st.session_state['participants'] = all_participants
+                                st.session_state['mode'] = 'daywise'
+                                st.success(f"✅ Found {len(all_participants)} total participants across all meetings!")
+                            else:
+                                st.error("❌ No participants found in any meetings")
                         else:
-                            st.error("❌ No participants found")
+                            st.error(f"❌ No meetings found for {target_date}")
                     else:
                         st.error("❌ Authentication failed")
-            else:
-                st.error("❌ Please enter Meeting ID")
 
 # Main content
 if 'participants' in st.session_state:
@@ -347,12 +473,12 @@ if 'participants' in st.session_state:
     st.download_button(
         "📥 Download CSV",
         data=csv,
-        file_name=f"zoom_attendance_{target_date}.csv",
+        file_name=f"zoom_attendance_analytics.csv",
         mime="text/csv"
     )
 
 else:
-    st.info("👆 Upload your .env file and fetch data to get started!")
+    st.info("👆 Upload your .env file and select analytics mode to get started!")
     
     st.subheader("📝 Sample .env format:")
     st.code("""
