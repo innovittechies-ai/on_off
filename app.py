@@ -180,10 +180,39 @@ with st.sidebar:
         # Analytics mode selection
         mode = st.radio(
             "Select Mode:",
-            ["Single Meeting", "Day-wise Analytics"]
+            ["Find Meeting IDs", "Single Meeting", "Day-wise Analytics"]
         )
         
-        if mode == "Single Meeting":
+        if mode == "Find Meeting IDs":
+            target_date = st.date_input("Select Date to Find Meetings", value=datetime.now())
+            
+            if st.button("🔍 Find Meeting IDs", type="primary"):
+                with st.spinner("Searching for meetings..."):
+                    token = get_zoom_token(
+                        env_vars.get('ZOOM_ACCOUNT_ID'),
+                        env_vars.get('ZOOM_CLIENT_ID'),
+                        env_vars.get('ZOOM_CLIENT_SECRET')
+                    )
+                    
+                    if token:
+                        meetings = get_all_meetings_for_date(token, target_date.strftime('%Y-%m-%d'))
+                        
+                        if meetings:
+                            st.success(f"✅ Found {len(meetings)} meetings on {target_date}")
+                            
+                            for i, meeting in enumerate(meetings, 1):
+                                st.write(f"**Meeting {i}:**")
+                                st.write(f"📋 **ID:** `{meeting.get('id')}`")
+                                st.write(f"📝 **Topic:** {meeting.get('topic', 'N/A')}")
+                                st.write(f"⏰ **Start Time:** {meeting.get('start_time', 'N/A')}")
+                                st.write(f"👥 **Type:** {meeting.get('type_str', 'N/A')}")
+                                st.write("---")
+                        else:
+                            st.error(f"❌ No meetings found for {target_date}")
+                    else:
+                        st.error("❌ Authentication failed")
+        
+        elif mode == "Single Meeting":
             meeting_id = st.text_input("Meeting ID", value=env_vars.get('ZOOM_MEETING_ID', ''))
             target_date = st.date_input("Meeting Date", value=datetime.now())
             
