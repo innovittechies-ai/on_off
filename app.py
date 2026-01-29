@@ -20,23 +20,58 @@ def get_zoom_token(account_id, client_id, client_secret):
     return None
 
 def get_all_meetings_for_date(token, target_date):
-    """Get all meetings for a specific date"""
+    """Get all meetings for a specific date using proper Zoom API endpoints"""
     headers = {'Authorization': f'Bearer {token}'}
     all_meetings = []
     
-    # Try to get past meetings
-    past_meetings_url = f"https://api.zoom.us/v2/users/me/meetings"
-    params = {'type': 'previous_meetings', 'page_size': 300}
+    # Method 1: Get past meetings using the correct endpoint
+    past_meetings_url = "https://api.zoom.us/v2/users/me/meetings"
+    params = {
+        'type': 'past',
+        'page_size': 300,
+        'from': target_date,
+        'to': target_date
+    }
     
     response = requests.get(past_meetings_url, headers=headers, params=params)
     if response.status_code == 200:
         meetings_data = response.json()
         meetings = meetings_data.get('meetings', [])
-        
+        all_meetings.extend(meetings)
+    
+    # Method 2: Try report endpoint for admin users
+    report_meetings_url = "https://api.zoom.us/v2/report/users/me/meetings"
+    params = {
+        'from': target_date,
+        'to': target_date,
+        'page_size': 300
+    }
+    
+    response = requests.get(report_meetings_url, headers=headers, params=params)
+    if response.status_code == 200:
+        meetings_data = response.json()
+        meetings = meetings_data.get('meetings', [])
+        # Avoid duplicates
+        existing_ids = {m.get('id') for m in all_meetings}
         for meeting in meetings:
-            start_time = meeting.get('start_time', '')
-            if start_time and start_time[:10] == target_date:
+            if meeting.get('id') not in existing_ids:
                 all_meetings.append(meeting)
+    
+    # Method 3: Get all meetings and filter by date (fallback)
+    if not all_meetings:
+        all_meetings_url = "https://api.zoom.us/v2/users/me/meetings"
+        params = {'type': 'past', 'page_size': 300}
+        
+        response = requests.get(all_meetings_url, headers=headers, params=params)
+        if response.status_code == 200:
+            meetings_data = response.json()
+            meetings = meetings_data.get('meetings', [])
+            
+            # Filter by date
+            for meeting in meetings:
+                start_time = meeting.get('start_time', '')
+                if start_time and start_time[:10] == target_date:
+                    all_meetings.append(meeting)
     
     return all_meetings
 
