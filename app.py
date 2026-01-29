@@ -414,30 +414,26 @@ if 'participants' in st.session_state:
     tab1, tab2, tab3 = st.tabs(["📈 Duration Analysis", "👥 Participation Overview", "⏰ Time Analysis"])
     
     with tab1:
-        col1, col2 = st.columns(2)
+        # Full width duration bar chart
+        fig_duration = px.bar(
+            df.sort_values('Duration (min)', ascending=False).head(20), 
+            x='Name', y='Duration (min)',
+            title="🏆 Top 20 Participants by Duration",
+            color='Duration (min)',
+            color_continuous_scale='Blues'
+        )
+        fig_duration.update_layout(xaxis_tickangle=45, height=500)
+        st.plotly_chart(fig_duration, width='stretch')
         
-        with col1:
-            # Duration distribution bar chart
-            fig_duration = px.bar(
-                df.sort_values('Duration (min)', ascending=False).head(20), 
-                x='Name', y='Duration (min)',
-                title="🏆 Top 20 Participants by Duration",
-                color='Duration (min)',
-                color_continuous_scale='Blues'
-            )
-            fig_duration.update_layout(xaxis_tickangle=45, height=400)
-            st.plotly_chart(fig_duration, width='stretch')
-        
-        with col2:
-            # Duration histogram
-            fig_hist = px.histogram(
-                df, x='Duration (min)', 
-                nbins=10,
-                title="📊 Duration Distribution",
-                color_discrete_sequence=['#FF6B6B']
-            )
-            fig_hist.update_layout(height=400)
-            st.plotly_chart(fig_hist, width='stretch')
+        # Duration histogram below
+        fig_hist = px.histogram(
+            df, x='Duration (min)', 
+            nbins=10,
+            title="📊 Duration Distribution",
+            color_discrete_sequence=['#FF6B6B']
+        )
+        fig_hist.update_layout(height=400)
+        st.plotly_chart(fig_hist, width='stretch')
     
     with tab2:
         col1, col2 = st.columns(2)
