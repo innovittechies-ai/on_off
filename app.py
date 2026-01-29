@@ -217,13 +217,106 @@ if 'participants' in st.session_state:
     with col3:
         st.metric("🏆 Max Duration", f"{df['Duration (min)'].max() if len(df) > 0 else 0} min")
     
-    # Chart
-    fig = px.bar(df.head(15), x='Name', y='Duration (min)',
-                title="📊 Participant Duration",
+    # Analytics Dashboard
+    st.subheader("📊 Attendance Analytics")
+    
+    # Create analytics tabs
+    tab1, tab2, tab3 = st.tabs(["📈 Duration Analysis", "👥 Participation Overview", "⏰ Time Analysis"])
+    
+    with tab1:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Duration distribution bar chart
+            fig_duration = px.bar(
+                df.sort_values('Duration (min)', ascending=False).head(20), 
+                x='Name', y='Duration (min)',
+                title="🏆 Top 20 Participants by Duration",
                 color='Duration (min)',
-                color_continuous_scale='viridis')
-    fig.update_layout(xaxis_tickangle=45)
-    st.plotly_chart(fig, width='stretch')
+                color_continuous_scale='Blues'
+            )
+            fig_duration.update_layout(xaxis_tickangle=45, height=400)
+            st.plotly_chart(fig_duration, width='stretch')
+        
+        with col2:
+            # Duration histogram
+            fig_hist = px.histogram(
+                df, x='Duration (min)', 
+                nbins=10,
+                title="📊 Duration Distribution",
+                color_discrete_sequence=['#FF6B6B']
+            )
+            fig_hist.update_layout(height=400)
+            st.plotly_chart(fig_hist, width='stretch')
+    
+    with tab2:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Attendance categories
+            duration_categories = []
+            for _, row in df.iterrows():
+                duration = row['Duration (min)']
+                if duration >= 90:
+                    duration_categories.append('Full Attendance (90+ min)')
+                elif duration >= 60:
+                    duration_categories.append('Good Attendance (60-89 min)')
+                elif duration >= 30:
+                    duration_categories.append('Partial Attendance (30-59 min)')
+                else:
+                    duration_categories.append('Brief Attendance (<30 min)')
+            
+            category_counts = pd.Series(duration_categories).value_counts()
+            
+            fig_pie = px.pie(
+                values=category_counts.values, 
+                names=category_counts.index,
+                title="🎯 Attendance Categories",
+                color_discrete_sequence=['#2E8B57', '#4682B4', '#FF8C00', '#DC143C']
+            )
+            st.plotly_chart(fig_pie, width='stretch')
+        
+        with col2:
+            # Attendance stats
+            st.markdown("### 📈 Key Statistics")
+            
+            full_attendance = len([d for d in df['Duration (min)'] if d >= 90])
+            good_attendance = len([d for d in df['Duration (min)'] if 60 <= d < 90])
+            partial_attendance = len([d for d in df['Duration (min)'] if 30 <= d < 60])
+            brief_attendance = len([d for d in df['Duration (min)'] if d < 30])
+            
+            st.metric("🟢 Full Attendance (90+ min)", f"{full_attendance} ({full_attendance/len(df)*100:.1f}%)")
+            st.metric("🔵 Good Attendance (60-89 min)", f"{good_attendance} ({good_attendance/len(df)*100:.1f}%)")
+            st.metric("🟡 Partial Attendance (30-59 min)", f"{partial_attendance} ({partial_attendance/len(df)*100:.1f}%)")
+            st.metric("🔴 Brief Attendance (<30 min)", f"{brief_attendance} ({brief_attendance/len(df)*100:.1f}%)")
+    
+    with tab3:
+        # Extract hour from join time for time analysis
+        join_hours = []
+        for _, row in df.iterrows():
+            join_time = row['Join Time IST']
+            if join_time != 'N/A' and 'IST' in join_time:
+                try:
+                    hour = int(join_time.split(' ')[1].split(':')[0])
+                    join_hours.append(hour)
+                except:
+                    pass
+        
+        if join_hours:
+            hour_counts = pd.Series(join_hours).value_counts().sort_index()
+            
+            fig_time = px.bar(
+                x=hour_counts.index, 
+                y=hour_counts.values,
+                title="⏰ Join Time Distribution (Hour of Day)",
+                labels={'x': 'Hour (24h format)', 'y': 'Number of Participants'},
+                color=hour_counts.values,
+                color_continuous_scale='Viridis'
+            )
+            fig_time.update_layout(height=400)
+            st.plotly_chart(fig_time, width='stretch')
+        else:
+            st.info("No valid join time data available for analysis")
     
     # Table
     st.subheader("📋 Detailed Report")
