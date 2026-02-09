@@ -18,10 +18,20 @@ def get_zoom_token(account_id, client_id, client_secret):
         return response.json()['access_token']
     return None
 
-def get_meetings_by_date(token, target_date):
+def get_account_owner(token):
+    """Get the account owner user ID"""
+    headers = {'Authorization': f'Bearer {token}'}
+    response = requests.get("https://api.zoom.us/v2/users", headers=headers, params={'page_size': 1})
+    if response.status_code == 200:
+        users = response.json().get('users', [])
+        if users:
+            return users[0].get('id') or users[0].get('email')
+    return None
+
+def get_meetings_by_date(token, user_id, target_date):
     """Get all past meetings for a specific date"""
     headers = {'Authorization': f'Bearer {token}'}
-    url = "https://api.zoom.us/v2/report/users/me/meetings"
+    url = f"https://api.zoom.us/v2/report/users/{user_id}/meetings"
     params = {'from': target_date, 'to': target_date, 'page_size': 300}
     
     response = requests.get(url, headers=headers, params=params)
@@ -99,7 +109,11 @@ with st.sidebar:
                     )
                     
                     if token:
-                        meetings = get_meetings_by_date(token, target_date.strftime('%Y-%m-%d'))
+                        user_id = get_account_owner(token)
+                        if not user_id:
+                            user_id = "innovit.techies@gmail.com"  # Fallback
+                        
+                        meetings = get_meetings_by_date(token, user_id, target_date.strftime('%Y-%m-%d'))
                         
                         if meetings:
                             st.success(f"✅ Found {len(meetings)} meetings on {target_date}")
@@ -108,7 +122,7 @@ with st.sidebar:
                                 st.write(f"**Meeting {i}:**")
                                 st.write(f"📋 **ID:** `{meeting.get('id')}`")
                                 st.write(f"📝 **Topic:** {meeting.get('topic', 'N/A')}")
-                                st.write(f"⏰ **Start:** {meeting.get('start_time', 'N/A')}")
+                                st.write(f"⏰ **Start:** {convert_to_ist(meeting.get('start_time', ''))}")
                                 st.write(f"⏱️ **Duration:** {meeting.get('duration', 0)} min")
                                 st.write("---")
                         else:
