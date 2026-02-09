@@ -18,55 +18,38 @@ def get_zoom_token(account_id, client_id, client_secret):
         return response.json()['access_token']
     return None
 
-def get_daily_meeting_data(token, meeting_id, target_date):
+def get_meetings_by_date(token, target_date):
+    """Get all past meetings for a specific date"""
     headers = {'Authorization': f'Bearer {token}'}
-    all_participants = []
+    url = "https://api.zoom.us/v2/report/users/me/meetings"
+    params = {'from': target_date, 'to': target_date, 'page_size': 300}
     
-    # Try past meeting instances
-    instances_url = f"https://api.zoom.us/v2/past_meetings/{meeting_id}/instances"
-    response = requests.get(instances_url, headers=headers)
-    
+    response = requests.get(url, headers=headers, params=params)
     if response.status_code == 200:
-        meetings = response.json().get('meetings', [])
-        for meeting in meetings:
-            uuid = meeting.get('uuid')
-            participants_url = f"https://api.zoom.us/v2/report/meetings/{uuid}/participants"
-            
-            next_page_token = None
-            while True:
-                params = {'page_size': 300}
-                if next_page_token:
-                    params['next_page_token'] = next_page_token
-                
-                resp = requests.get(participants_url, headers=headers, params=params)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    all_participants.extend(data.get('participants', []))
-                    next_page_token = data.get('next_page_token')
-                    if not next_page_token:
-                        break
-                else:
-                    break
+        return response.json().get('meetings', [])
+    return []
+
+def get_meeting_participants(token, meeting_id):
+    """Get participants for a specific meeting"""
+    headers = {'Authorization': f'Bearer {token}'}
+    url = f"https://api.zoom.us/v2/report/meetings/{meeting_id}/participants"
+    all_participants = []
+    next_page_token = None
     
-    # Fallback: direct meeting report
-    if not all_participants:
-        direct_url = f"https://api.zoom.us/v2/report/meetings/{meeting_id}/participants"
-        next_page_token = None
+    while True:
+        params = {'page_size': 300}
+        if next_page_token:
+            params['next_page_token'] = next_page_token
         
-        while True:
-            params = {'page_size': 300}
-            if next_page_token:
-                params['next_page_token'] = next_page_token
-            
-            resp = requests.get(direct_url, headers=headers, params=params)
-            if resp.status_code == 200:
-                data = resp.json()
-                all_participants.extend(data.get('participants', []))
-                next_page_token = data.get('next_page_token')
-                if not next_page_token:
-                    break
-            else:
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            all_participants.extend(data.get('participants', []))
+            next_page_token = data.get('next_page_token')
+            if not next_page_token:
                 break
+        else:
+            break
     
     return all_participants
 
@@ -102,12 +85,13 @@ with st.sidebar:
         env_vars = parse_env_file(uploaded_file)
         st.success("✅ Environment file loaded!")
         
-        meeting_id = st.text_input("Meeting ID", value=env_vars.get('ZOOM_MEETING_ID', ''))
-        target_date = st.date_input("Meeting Date", value=datetime.now())
+        mode = st.radio("Select Mode:", ["Find Meeting IDs", "Get Attendance Report"])
         
-        if st.button("🚀 Fetch Attendance Data", type="primary"):
-            if meeting_id:
-                with st.spinner("Fetching data..."):
+        if mode == "Find Meeting IDs":
+            target_date = st.date_input("Select Date", value=datetime.now() - timedelta(days=1))
+            
+            if st.button("🔍 Find Meeting IDs", type="primary"):
+                with st.spinner("Searching for meetings..."):
                     token = get_zoom_token(
                         env_vars.get('ZOOM_ACCOUNT_ID'),
                         env_vars.get('ZOOM_CLIENT_ID'),
@@ -115,17 +99,47 @@ with st.sidebar:
                     )
                     
                     if token:
-                        participants = get_daily_meeting_data(token, meeting_id, target_date.strftime('%Y-%m-%d'))
+                        meetings = get_meetings_by_date(token, target_date.strftime('%Y-%m-%d'))
                         
-                        if participants:
-                            st.session_state['participants'] = participants
-                            st.success(f"✅ Found {len(participants)} participants!")
+                        if meetings:
+                            st.success(f"✅ Found {len(meetings)} meetings on {target_date}")
+                            st.write("---")
+                            for i, meeting in enumerate(meetings, 1):
+                                st.write(f"**Meeting {i}:**")
+                                st.write(f"📋 **ID:** `{meeting.get('id')}`")
+                                st.write(f"📝 **Topic:** {meeting.get('topic', 'N/A')}")
+                                st.write(f"⏰ **Start:** {meeting.get('start_time', 'N/A')}")
+                                st.write(f"⏱️ **Duration:** {meeting.get('duration', 0)} min")
+                                st.write("---")
                         else:
-                            st.error("❌ No participants found")
+                            st.error(f"❌ No meetings found for {target_date}")
                     else:
                         st.error("❌ Authentication failed")
-            else:
-                st.error("❌ Please enter Meeting ID")
+        
+        else:  # Get Attendance Report
+            meeting_id = st.text_input("Meeting ID", value=env_vars.get('ZOOM_MEETING_ID', ''))
+            
+            if st.button("🚀 Get Attendance Report", type="primary"):
+                if meeting_id:
+                    with st.spinner("Fetching attendance data..."):
+                        token = get_zoom_token(
+                            env_vars.get('ZOOM_ACCOUNT_ID'),
+                            env_vars.get('ZOOM_CLIENT_ID'),
+                            env_vars.get('ZOOM_CLIENT_SECRET')
+                        )
+                        
+                        if token:
+                            participants = get_meeting_participants(token, meeting_id)
+                            
+                            if participants:
+                                st.session_state['participants'] = participants
+                                st.success(f"✅ Found {len(participants)} participants!")
+                            else:
+                                st.error("❌ No participants found")
+                        else:
+                            st.error("❌ Authentication failed")
+                else:
+                    st.error("❌ Please enter Meeting ID")
 
 if 'participants' in st.session_state:
     participants = st.session_state['participants']
@@ -301,12 +315,15 @@ if 'participants' in st.session_state:
     )
 
 else:
-    st.info("👆 Upload your .env file and fetch data to get started!")
+    st.info("👆 Upload your .env file to get started!")
+    
+    st.subheader("📝 How to use:")
+    st.write("**1. Find Meeting IDs:** Select a date to see all meetings held that day")
+    st.write("**2. Get Attendance Report:** Enter a Meeting ID to see participant details")
     
     st.subheader("📝 Sample .env format:")
     st.code("""
 ZOOM_ACCOUNT_ID=your_account_id
 ZOOM_CLIENT_ID=your_client_id
 ZOOM_CLIENT_SECRET=your_client_secret
-ZOOM_MEETING_ID=your_meeting_id
     """, language="bash")
